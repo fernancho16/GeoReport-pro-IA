@@ -1,0 +1,6 @@
+{
+  "name": "GeoReport Pro",
+  "description": "Generador de informes técnicos de localización geográfica y scripts de automatización PDF.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
