@@ -17,28 +17,6 @@ L.Icon.Default.mergeOptions({
   shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
 });
 
-// Custom Premium DivIcons for Maps
-export const startIcon = typeof window !== 'undefined' ? L.divIcon({
-  className: 'custom-div-icon',
-  html: `<div style="width: 16px; height: 16px; background-color: #1e293b; border-radius: 50%; border: 2px solid white; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1); outline: 4px solid rgba(30, 41, 59, 0.2);"></div>`,
-  iconSize: [16, 16],
-  iconAnchor: [8, 8],
-}) : null;
-
-export const endIcon = typeof window !== 'undefined' ? L.divIcon({
-  className: 'custom-div-icon',
-  html: `<div style="width: 16px; height: 16px; background-color: #2563eb; border-radius: 50%; border: 2px solid white; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1); outline: 4px solid rgba(37, 99, 235, 0.2);"></div>`,
-  iconSize: [16, 16],
-  iconAnchor: [8, 8],
-}) : null;
-
-export const greenIcon = typeof window !== 'undefined' ? L.divIcon({
-  className: 'custom-div-icon',
-  html: `<div style="width: 16px; height: 16px; background-color: #059669; border-radius: 50%; border: 2px solid white; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1); outline: 4px solid rgba(5, 150, 105, 0.2);"></div>`,
-  iconSize: [16, 16],
-  iconAnchor: [8, 8],
-}) : null;
-
 const API_KEY = process.env.GOOGLE_MAPS_PLATFORM_KEY || '';
 
 interface GenerationResponse {
@@ -321,7 +299,7 @@ export default function App() {
   const [endLat, setEndLat] = useState('');
   const [endLng, setEndLng] = useState('');
 
-  // States for additional position markers (Maps 2 & 3)
+  // States for additional markers (Maps 2 & 3)
   const [image2Markers, setImage2Markers] = useState<AdditionalMarker[]>([
     { id: 'm2-1', lat: '', lng: '', label: 'Marca A1' },
     { id: 'm2-2', lat: '', lng: '', label: 'Marca A2' }
@@ -373,7 +351,6 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const reportRef = useRef<HTMLDivElement>(null);
-  const mapRef = useRef<any>(null);
   const mapRef1 = useRef<any>(null);
   const mapRef2 = useRef<any>(null);
   const mapRef3 = useRef<any>(null);
@@ -692,7 +669,7 @@ export default function App() {
       if (hasValidCoords(result.startCoords) && hasValidCoords(result.endCoords)) {
         newPageIfNeeded(120);
         y += 6; hline(y); y += 8;
-
+        
         const mapEls = Array.from(reportRef.current?.querySelectorAll<HTMLElement>('.leaflet-container') || []);
         
         for (let mapIdx = 0; mapIdx < mapEls.length; mapIdx++) {
@@ -776,203 +753,160 @@ export default function App() {
               y += 10 + validGroupBMarkers.length * 6;
             }
           }
-
-          // ── Capture Leaflet map as rendered on screen ──
+          
           const mapRect = mapEl.getBoundingClientRect();
-          let renderedCanvas: HTMLCanvasElement | null = null;
-          let usedManualRenderer = false;
-          const drawGridLabelsFromDom = (targetCtx: CanvasRenderingContext2D) => {
+          const canvas = document.createElement('canvas');
+          canvas.width = mapRect.width;
+          canvas.height = mapRect.height;
+          const ctx = canvas.getContext('2d');
+          
+          if (ctx) {
+            ctx.fillStyle = '#f8fafc';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            const tiles = Array.from(mapEl.querySelectorAll<HTMLImageElement>('img'));
+            const tilePromises = tiles.map(async (img) => {
+              if (!img.src || img.style.display === 'none' || img.src.includes('marker')) return;
+              const rect = img.getBoundingClientRect();
+              const x = rect.left - mapRect.left;
+              const tileY = rect.top - mapRect.top;
+              
+              await new Promise<void>((resolve) => {
+                const newImg = new Image();
+                newImg.crossOrigin = 'anonymous';
+                newImg.onload = () => {
+                  ctx.drawImage(newImg, x, tileY, rect.width, rect.height);
+                  resolve();
+                };
+                newImg.onerror = () => resolve();
+                newImg.src = img.src;
+              });
+            });
+            await Promise.all(tilePromises);
+            
+            const svgs = Array.from(mapEl.querySelectorAll<SVGElement>('svg'));
+            for (const svg of svgs) {
+              const svgRect = svg.getBoundingClientRect();
+              const svgX = svgRect.left - mapRect.left;
+              const svgY = svgRect.top - mapRect.top;
+              
+              await new Promise<void>((resolve) => {
+                const clonedSvg = svg.cloneNode(true) as SVGElement;
+                clonedSvg.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+                clonedSvg.setAttribute('xmlns:xlink', 'http://www.w3.org/1999/xlink');
+                clonedSvg.setAttribute('width', `${svgRect.width}`);
+                clonedSvg.setAttribute('height', `${svgRect.height}`);
+                
+                if (!clonedSvg.getAttribute('viewBox')) {
+                  clonedSvg.setAttribute('viewBox', `0 0 ${svgRect.width} ${svgRect.height}`);
+                }
+                
+                const svgMarkup = new XMLSerializer().serializeToString(clonedSvg);
+                const svgBlob = new Blob([svgMarkup], { type: 'image/svg+xml;charset=utf-8' });
+                const svgUrl = URL.createObjectURL(svgBlob);
+                const svgImg = new Image();
+                
+                svgImg.onload = () => {
+                  ctx.drawImage(svgImg, svgX, svgY, svgRect.width, svgRect.height);
+                  URL.revokeObjectURL(svgUrl);
+                  resolve();
+                };
+                
+                svgImg.onerror = () => {
+                  URL.revokeObjectURL(svgUrl);
+                  resolve();
+                };
+                
+                svgImg.src = svgUrl;
+              });
+            }
+            
+            const markerElements = Array.from(mapEl.querySelectorAll<HTMLElement>('.leaflet-marker-icon:not(.grid-label)'));
+            markerElements.forEach((markerEl, markerIdx) => {
+              const markerRect = markerEl.getBoundingClientRect();
+              const markerX = markerRect.left - mapRect.left;
+              const markerY = markerRect.top - mapRect.top;
+              
+              let markerColor = '#059669';
+              if (markerIdx === 0) {
+                markerColor = '#1e293b';
+              } else if (markerIdx === 1) {
+                markerColor = '#dc2626';
+              }
+              
+              ctx.fillStyle = markerColor;
+              ctx.beginPath();
+              ctx.arc(markerX + (markerRect.width || 25) / 2, markerY + (markerRect.height || 41) / 2, 4, 0, Math.PI * 2);
+              ctx.fill();
+              ctx.strokeStyle = '#ffffff';
+              ctx.lineWidth = 1.5;
+              ctx.stroke();
+            });
+            
+            const tooltips = Array.from(mapEl.querySelectorAll<HTMLElement>('.leaflet-tooltip'));
+            tooltips.forEach((tooltipEl) => {
+              const tooltipRect = tooltipEl.getBoundingClientRect();
+              const tooltipX = tooltipRect.left - mapRect.left;
+              const tooltipY = tooltipRect.top - mapRect.top;
+              const text = tooltipEl.textContent?.trim() || '';
+              
+              let bgColor = '#059669';
+              if (text.includes('INICIO')) {
+                bgColor = '#1e293b';
+              } else if (text.includes('FINAL')) {
+                bgColor = '#dc2626';
+              }
+              
+              ctx.fillStyle = bgColor;
+              ctx.fillRect(tooltipX, tooltipY, tooltipRect.width || 45, tooltipRect.height || 22);
+              ctx.fillStyle = '#ffffff';
+              ctx.font = 'bold 10px sans-serif';
+              ctx.fillText(text, tooltipX + 6, tooltipY + 14);
+            });
+            
             const labels = Array.from(mapEl.querySelectorAll<HTMLElement>('.lat-label-text, .lng-label-text'));
-            const scaleX = targetCtx.canvas.width / mapRect.width;
-            const scaleY = targetCtx.canvas.height / mapRect.height;
-            const fontSize = 16 * Math.max(scaleX, scaleY);
-
-            targetCtx.save();
-            targetCtx.font = `bold ${fontSize}px monospace`;
-            targetCtx.textBaseline = 'middle';
-
-            for (const label of labels) {
+            const scaleX = canvas.width / mapRect.width;
+            const scaleY = canvas.height / mapRect.height;
+            ctx.font = `bold ${16 * Math.max(scaleX, scaleY)}px monospace`;
+            ctx.textBaseline = 'middle';
+            
+            labels.forEach((label) => {
               const rect = label.getBoundingClientRect();
-              if (!rect.width || !rect.height) continue;
-
               const text = label.textContent?.trim();
-              if (!text) continue;
-
+              if (!rect.width || !rect.height || !text) return;
+              
               const style = window.getComputedStyle(label);
               const x = (rect.left - mapRect.left) * scaleX;
-              const yy = (rect.top - mapRect.top + rect.height / 2) * scaleY;
+              const labelY = (rect.top - mapRect.top + rect.height / 2) * scaleY;
               const isLng = label.classList.contains('lng-label-text');
-
-              targetCtx.save();
-              targetCtx.fillStyle = style.color || (useSatellite ? 'rgba(255,255,255,0.9)' : 'rgba(0,0,0,0.7)');
-              targetCtx.shadowColor = style.textShadow && style.textShadow !== 'none'
+              
+              ctx.save();
+              ctx.fillStyle = style.color || (useSatellite ? 'rgba(255,255,255,0.9)' : 'rgba(0,0,0,0.7)');
+              ctx.shadowColor = style.textShadow && style.textShadow !== 'none'
                 ? (useSatellite ? 'rgba(0,0,0,0.9)' : 'rgba(255,255,255,0.9)')
                 : 'transparent';
-              targetCtx.shadowBlur = style.textShadow && style.textShadow !== 'none' ? 2 * Math.max(scaleX, scaleY) : 0;
+              ctx.shadowBlur = style.textShadow && style.textShadow !== 'none' ? 2 * Math.max(scaleX, scaleY) : 0;
               if (isLng) {
-                targetCtx.translate(x, yy);
-                targetCtx.rotate(-Math.PI / 2);
-                targetCtx.textAlign = 'left';
-                targetCtx.fillText(text, 0, 0);
+                ctx.translate(x, labelY);
+                ctx.rotate(-Math.PI / 2);
+                ctx.textAlign = 'left';
+                ctx.fillText(text, 0, 0);
               } else {
-                targetCtx.textAlign = 'left';
-                targetCtx.fillText(text, x, yy);
+                ctx.textAlign = 'left';
+                ctx.fillText(text, x, labelY);
               }
-              targetCtx.restore();
-            }
-
-            targetCtx.restore();
-          };
-
-          try {
-            renderedCanvas = await html2canvas(mapEl, {
-              useCORS: true,
-              allowTaint: false,
-              backgroundColor: '#f8fafc',
-              scale: 2,
-              logging: false,
-              ignoreElements: (element) => {
-                const classList = (element as HTMLElement).classList;
-                return !!classList && (
-                  classList.contains('leaflet-control-container') ||
-                  classList.contains('leaflet-popup-pane')
-                );
-              },
+              ctx.restore();
             });
-          } catch (captureErr) {
-            console.warn('html2canvas map capture failed, falling back to manual renderer:', captureErr);
-          }
-
-          if (!renderedCanvas) {
-            const canvas = document.createElement('canvas');
-            canvas.width = mapRect.width;
-            canvas.height = mapRect.height;
-            const ctx = canvas.getContext('2d');
-            if (ctx) {
-              ctx.fillStyle = '#f8fafc';
-              ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-              // 1. Load and draw all tile images via clean Image objects with crossOrigin
-              const tiles = Array.from(mapEl.querySelectorAll<HTMLImageElement>('img'));
-              const tilePromises = tiles.map(async (img) => {
-                if (!img.src || img.style.display === 'none' || img.src.includes('marker')) return;
-                const rect = img.getBoundingClientRect();
-                const x = rect.left - mapRect.left;
-                const ty = rect.top - mapRect.top;
-                await new Promise<void>((resolve) => {
-                  const newImg = new Image();
-                  newImg.crossOrigin = 'anonymous';
-                  newImg.onload = () => {
-                    ctx.drawImage(newImg, x, ty, rect.width, rect.height);
-                    resolve();
-                  };
-                  newImg.onerror = () => resolve();
-                  newImg.src = img.src;
-                });
-              });
-              await Promise.all(tilePromises);
-
-              // 2. Draw SVG overlays
-              const svgs = Array.from(mapEl.querySelectorAll<SVGElement>('svg'));
-              for (const svg of svgs) {
-                const svgRect = svg.getBoundingClientRect();
-                const svgX = svgRect.left - mapRect.left;
-                const svgY = svgRect.top - mapRect.top;
-
-                await new Promise<void>((resolve) => {
-                  const clonedSvg = svg.cloneNode(true) as SVGElement;
-                  clonedSvg.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
-                  clonedSvg.setAttribute('xmlns:xlink', 'http://www.w3.org/1999/xlink');
-                  clonedSvg.setAttribute('width', `${svgRect.width}`);
-                  clonedSvg.setAttribute('height', `${svgRect.height}`);
-
-                  if (!clonedSvg.getAttribute('viewBox')) {
-                    clonedSvg.setAttribute('viewBox', `0 0 ${svgRect.width} ${svgRect.height}`);
-                  }
-
-                  const svgMarkup = new XMLSerializer().serializeToString(clonedSvg);
-                  const svgBlob = new Blob([svgMarkup], { type: 'image/svg+xml;charset=utf-8' });
-                  const svgUrl = URL.createObjectURL(svgBlob);
-                  const svgImg = new Image();
-
-                  svgImg.onload = () => {
-                    ctx.drawImage(svgImg, svgX, svgY, svgRect.width, svgRect.height);
-                    URL.revokeObjectURL(svgUrl);
-                    resolve();
-                  };
-
-                  svgImg.onerror = () => {
-                    URL.revokeObjectURL(svgUrl);
-                    resolve();
-                  };
-
-                  svgImg.src = svgUrl;
-                });
-              }
-
-              // 3. Draw Marker Circles & Tooltips via DOM
-              const markerElements = Array.from(mapEl.querySelectorAll<HTMLElement>('.leaflet-marker-icon:not(.grid-label)'));
-              markerElements.forEach((m, markerIdx) => {
-                const mRect = m.getBoundingClientRect();
-                const mx = mRect.left - mapRect.left;
-                const my = mRect.top - mapRect.top;
-                
-                let markerColor = '#059669';
-                if (markerIdx === 0) {
-                  markerColor = '#1e293b';
-                } else if (markerIdx === 1) {
-                  markerColor = '#2563eb';
-                }
-
-                ctx.fillStyle = markerColor;
-                ctx.beginPath();
-                ctx.arc(mx + (mRect.width || 25) / 2, my + (mRect.height || 41) / 2, 6, 0, Math.PI * 2);
-                ctx.fill();
-                ctx.strokeStyle = '#ffffff';
-                ctx.lineWidth = 1.5;
-                ctx.stroke();
-              });
-
-              const tooltips = Array.from(mapEl.querySelectorAll<HTMLElement>('.leaflet-tooltip'));
-              tooltips.forEach((t) => {
-                const tRect = t.getBoundingClientRect();
-                const tx = tRect.left - mapRect.left;
-                const ty = tRect.top - mapRect.top;
-                
-                const text = t.textContent?.trim() || '';
-                let tooltipBg = '#059669';
-                if (text.includes('INICIO')) {
-                  tooltipBg = '#1e293b';
-                } else if (text.includes('FINAL')) {
-                  tooltipBg = '#2563eb';
-                }
-
-                ctx.fillStyle = tooltipBg;
-                ctx.fillRect(tx, ty, tRect.width || 45, tRect.height || 22);
-                ctx.fillStyle = '#ffffff';
-                ctx.font = 'bold 10px sans-serif';
-                ctx.fillText(text, tx + 6, ty + 14);
-              });
-
-              renderedCanvas = canvas;
-              usedManualRenderer = true;
-            }
-          }
-
-          if (renderedCanvas) {
+            
             try {
-              const renderedCtx = renderedCanvas.getContext('2d');
-              if (renderedCtx && usedManualRenderer) {
-                drawGridLabelsFromDom(renderedCtx);
-              }
-
-              const mapDataUrl = renderedCanvas.toDataURL('image/jpeg', 0.92);
+              const mapDataUrl = canvas.toDataURL('image/jpeg', 0.92);
               const mapH = (cW * mapRect.height) / mapRect.width;
               newPageIfNeeded(mapH + 10);
               pdf.addImage(mapDataUrl, 'JPEG', ml, y, cW, mapH);
               y += mapH + 10;
-            } catch (e) {
-              console.error("Canvas toDataURL tainted error:", e);
+            } catch (canvasErr: any) {
+              console.error('Map canvas export error:', canvasErr);
+              setError(`Error al exportar el mapa al PDF: ${canvasErr?.message || String(canvasErr)}`);
             }
           }
         }
@@ -1268,7 +1202,7 @@ export default function App() {
                 >
                   <span className="flex items-center gap-2">
                     <MapPin className="w-4 h-4 text-blue-500" />
-                    Marcas de Posición (Anexos B y C)
+                    Marcas de Posición (Anexos A y B)
                   </span>
                   <span className={`transform transition-transform duration-300 font-bold ${showAdditionalMarkers ? 'rotate-180' : ''}`}>
                     ▼
@@ -1288,7 +1222,7 @@ export default function App() {
                             : 'text-slate-500 hover:text-slate-800'
                         }`}
                       >
-                        Mapa Anexo B
+                        Mapa Anexo A
                       </button>
                       <button
                         type="button"
@@ -1299,7 +1233,7 @@ export default function App() {
                             : 'text-slate-500 hover:text-slate-800'
                         }`}
                       >
-                        Mapa Anexo C
+                        Mapa Anexo B
                       </button>
                     </div>
 
@@ -1451,403 +1385,6 @@ export default function App() {
                 </div>
 
                 <div className="relative group cursor-pointer">
-                  <input
-                    type="file"
-                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
-                    onChange={handleFileChange}
-                    accept="audio/*,.pdf,.txt,.doc,.docx"
-                    multiple
-                  />
-                  <div className={`p-8 border-2 border-dashed rounded-2xl flex flex-col items-center justify-center space-y-3 transition-all border-slate-200 bg-slate-50 group-hover:border-blue-500 min-h-[140px]`}>
-                    <div className="p-3 bg-white rounded-xl shadow-sm border border-slate-100 group-hover:scale-110 transition-transform">
-                      <FileCode className="w-6 h-6 text-slate-400 group-hover:text-blue-500" />
-                    </div>
-                    <div className="text-center">
-                      <p className="text-xs font-bold text-slate-600 uppercase tracking-widest">Arrastra documentos o audios</p>
-                      <p className="text-[10px] text-slate-400 mt-1">PDF, Audio, Texto (Múltiples archivos)</p>
-                    </div>
-                  </div>
-                </div>
-
-                {files.length > 0 && (
-                  <div className="space-y-2 max-h-48 overflow-y-auto pr-2">
-                    {files.map((f) => (
-                      <div key={f.id} className="flex items-center justify-between p-3 bg-green-50/50 border border-green-100 rounded-xl">
-                        <div className="flex items-center gap-3 overflow-hidden">
-                          <Check className="w-4 h-4 text-green-600 shrink-0" />
-                          <span className="text-xs font-bold text-green-800 truncate">{f.name}</span>
-                        </div>
-                        <button 
-                          onClick={() => setFiles(prev => prev.filter(item => item.id !== f.id))}
-                          className="text-[10px] text-red-500 font-bold uppercase tracking-widest hover:underline shrink-0"
-                        >
-                          Eliminar
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {error && (
-                <div className="bg-red-50 text-red-600 p-4 rounded-xl text-xs border border-red-100 font-medium">
-                  {error}
-                </div>
-              )}
-
-              {result && (
-                <div 
-                  style={{ animation: 'fadeIn 0.3s ease' }}
-                  className="bg-slate-900 rounded-2xl p-6 shadow-xl border border-slate-800 relative overflow-hidden group"
-                >
-                  <div className="flex items-center justify-between mb-6">
-                    <div className="flex items-center gap-2 text-white/90">
-                      <FileCode className="w-4 h-4 text-blue-400" />
-                      <h3 className="text-[10px] font-bold uppercase tracking-widest">Código Python Generado</h3>
-                    </div>
-                    <button
-                      onClick={() => copyToClipboard(result.code)}
-                      className="p-2 text-slate-400 hover:text-white transition-colors rounded-lg hover:bg-slate-800"
-                    >
-                      {copied ? <Check className="w-4 h-4 text-green-400" /> : <Copy className="w-4 h-4" />}
-                    </button>
-                  </div>
-                  
-                  <div className="bg-black/50 rounded-xl p-4 font-mono text-[11px] overflow-x-auto text-blue-100/80 leading-relaxed border border-white/5 h-48">
-                    <pre><code>{result.code}</code></pre>
-                  </div>
-              </div>
-              )}
-            </div>
-          </section>
-
-          {/* Right Pane: Technical Report Output */}
-          <section className="bg-slate-50 flex flex-col p-8">
-            {/* Empty state */}
-            {!result && !loading && (
-              <div
-                className="h-full flex flex-col items-center justify-center text-slate-400 space-y-4"
-                style={{ animation: 'fadeIn 0.3s ease' }}
-              >
-                <MapPin className="w-12 h-12 opacity-10" />
-                <p className="text-xs font-bold uppercase tracking-widest">Esperando Parámetros de Ruta</p>
-              </div>
-            )}
-
-            {/* Loading state */}
-            {loading && (
-              <div
-                className="h-full flex flex-col items-center justify-center space-y-6"
-                style={{ animation: 'fadeIn 0.3s ease' }}
-              >
-                <div className="relative">
-                  <div className="w-12 h-12 border-4 border-slate-200 border-t-blue-500 rounded-full animate-spin"></div>
-                  <Navigation className="w-4 h-4 text-blue-500 absolute inset-0 m-auto animate-pulse" />
-                </div>
-                <div className="text-center">
-                  <p className="text-xs font-bold uppercase tracking-widest text-slate-800">Generando Reporte</p>
-                  <p className="text-[10px] text-slate-400 mt-1 uppercase tracking-wider">Georreferenciando puntos de interés...</p>
-                </div>
-              </div>
-            )}
-
-            {/* Result state */}
-            {result && !loading && (
-              <div
-                ref={reportRef}
-                className="max-w-2xl mx-auto w-full bg-white shadow-2xl border border-slate-200 p-12 min-h-full flex flex-col relative"
-                style={{ animation: 'fadeIn 0.4s ease' }}
-              >
-                  <button 
-                    onClick={downloadPDF}
-                    className="absolute top-4 right-4 p-2 bg-blue-600 text-white rounded-lg shadow-lg hover:bg-blue-700 transition-all flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider z-10"
-                    title="Descargar Reporte en PDF"
-                  >
-                    <Download className="w-3 h-3" />
-                    Bajar PDF
-                  </button>
-
-                  <div className="border-b-2 border-slate-900 pb-6 mb-8 flex justify-between items-start">
-                    <div className="flex-1">
-                      <h1 className="text-2xl font-serif font-bold text-slate-900 tracking-tight leading-tight">CAPÍTULO: LOCALIZACIÓN DEL SITIO</h1>
-                      <p className="text-[10px] text-slate-500 uppercase tracking-[0.3em] font-bold mt-2 border-b border-slate-100 pb-2 mb-4">Reporte Técnico de Infraestructura Vial</p>
-                      
-                      <div className="grid grid-cols-2 gap-y-2 text-[10px] uppercase tracking-wider font-bold text-slate-400">
-                        {result.projectName && (
-                          <div className="flex flex-col">
-                            <span className="text-[8px] opacity-70">Proyecto</span>
-                            <span className="text-slate-800">{result.projectName}</span>
-                          </div>
-                        )}
-                        {result.vereda && (
-                          <div className="flex flex-col">
-                            <span className="text-[8px] opacity-70">Vereda</span>
-                            <span className="text-slate-800">{result.vereda}</span>
-                          </div>
-                        )}
-                        {result.convenioNumber && (
-                          <div className="flex flex-col">
-                            <span className="text-[8px] opacity-70">N° Convenio</span>
-                            <span className="text-slate-800">{result.convenioNumber}</span>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                    <div className="w-16 h-16 bg-slate-50 rounded-xl border border-slate-100 flex items-center justify-center grayscale opacity-50 shrink-0 ml-4">
-                      <Navigation className="w-8 h-8 text-slate-900" />
-                    </div>
-                  </div>
-                  
-                  <div className="flex-1 prose prose-slate prose-sm max-w-none 
-                    prose-headings:font-bold prose-headings:text-slate-900 prose-headings:uppercase prose-headings:text-xs prose-headings:tracking-widest prose-headings:border-l-4 prose-headings:border-blue-600 prose-headings:pl-3 prose-headings:mb-4
-                    prose-p:text-slate-600 prose-p:leading-relaxed prose-p:mb-6
-                    prose-li:text-slate-600
-                  ">
-                    <ReactMarkdown>{result.report}</ReactMarkdown>
-                  </div>
-
-                  {/* Map Visual Section */}
-                  {hasValidCoords(result.startCoords) && hasValidCoords(result.endCoords) ? (
-                    <div className="mt-8 pt-8 border-t border-slate-100 flex-1 flex flex-col space-y-12">
-                      
-                      {/* MAP 1: ANEXO A */}
-                      <div className="flex flex-col min-h-[400px]">
-                        <div className="flex items-center justify-between mb-4">
-                          <h3 className="text-xs font-bold text-slate-900 uppercase tracking-[0.2em]">ANEXO A: GEORREFERENCIACIÓN Y TRAZADO VIAL PRINCIPAL</h3>
-                          <div className="flex items-center gap-2">
-                            <button
-                              onClick={() => setUseSatellite(!useSatellite)}
-                              className={`text-[10px] px-2 py-1 rounded font-bold uppercase flex items-center gap-1 transition-colors ${
-                                useSatellite ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                              }`}
-                            >
-                              <MapIcon className="w-3 h-3" />
-                              {useSatellite ? 'Vista Plano' : 'Vista Satélite'}
-                            </button>
-                            {result._provider && (
-                              <span className="text-[9px] bg-green-50 text-green-600 px-2 py-1 rounded font-bold uppercase border border-green-100">
-                                IA: {result._provider}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-
-                        <div className="flex-1 rounded-2xl overflow-hidden border border-slate-200 relative shadow-inner aspect-[4/3] w-full min-h-[400px]">
-                          <MapContainer
-                            ref={mapRef1}
-                            key={`map1-${result.startCoords!.lat}-${result.startCoords!.lng}-${result.endCoords!.lat}-${result.endCoords!.lng}`}
-                            center={[result.startCoords!.lat, result.startCoords!.lng]}
-                            zoom={13}
-                            style={{ height: '100%', width: '100%' }}
-                            scrollWheelZoom={false}
-                          >
-                            <CoordinateGrid useSatellite={useSatellite} />
-                            <ChangeView center={[result.startCoords!.lat, result.startCoords!.lng]} zoom={13} mapRef={mapRef1} />
-                            {useSatellite ? (
-                              <TileLayer
-                                attribution='Tiles &copy; Esri &mdash; Esri, USDA, USGS, AEX, GeoEye, IGN'
-                                url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
-                                crossOrigin={true}
-                              />
-                            ) : (
-                              <TileLayer
-                                attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-                                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                                crossOrigin={true}
-                              />
-                            )}
-                            <Marker position={[result.startCoords!.lat, result.startCoords!.lng]} icon={startIcon}>
-                              <Tooltip permanent direction="top" offset={[0, -10]} className="font-bold text-[10px] uppercase bg-slate-900 text-white border-none rounded p-1 px-2 shadow-lg">INICIO</Tooltip>
-                              <Popup>Punto de Inicio</Popup>
-                            </Marker>
-                            <Marker position={[result.endCoords!.lat, result.endCoords!.lng]} icon={endIcon}>
-                              <Tooltip permanent direction="top" offset={[0, -10]} className="font-bold text-[10px] uppercase bg-blue-600 text-white border-none rounded p-1 px-2 shadow-lg">FINAL</Tooltip>
-                              <Popup>Punto de Finalización</Popup>
-                            </Marker>
-                            <LeafletRouting
-                              start={[result.startCoords!.lat, result.startCoords!.lng]}
-                              end={[result.endCoords!.lat, result.endCoords!.lng]}
-                            />
-                          </MapContainer>
-                        </div>
-
-                        <div className="mt-4 grid grid-cols-2 gap-4">
-                          <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 flex items-center gap-3">
-                            <LocateFixed className="w-5 h-5 text-slate-400" />
-                            <div>
-                              <p className="text-[8px] font-bold text-slate-400 uppercase">Inicio</p>
-                              <p className="text-[10px] font-mono text-slate-600">{result.startCoords!.lat.toFixed(8)}, {result.startCoords!.lng.toFixed(8)}</p>
-                            </div>
-                          </div>
-                          <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 flex items-center gap-3">
-                            <LocateFixed className="w-5 h-5 text-blue-400" />
-                            <div>
-                              <p className="text-[8px] font-bold text-slate-400 uppercase">Final</p>
-                              <p className="text-[10px] font-mono text-slate-600">{result.endCoords!.lat.toFixed(8)}, {result.endCoords!.lng.toFixed(8)}</p>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* MAP 2: ANEXO B */}
-                      <div className="flex flex-col min-h-[400px] pt-8 border-t border-slate-200/60">
-                        <div className="flex items-center justify-between mb-4">
-                          <h3 className="text-xs font-bold text-slate-900 uppercase tracking-[0.2em]">ANEXO B: TRAZADO VIAL CON MARCAS ADICIONALES (GRUPO A)</h3>
-                        </div>
-
-                        <div className="flex-1 rounded-2xl overflow-hidden border border-slate-200 relative shadow-inner aspect-[4/3] w-full min-h-[400px]">
-                          <MapContainer
-                            ref={mapRef2}
-                            key={`map2-${result.startCoords!.lat}-${result.startCoords!.lng}-${result.endCoords!.lat}-${result.endCoords!.lng}-${image2Markers.map(m => `${m.lat},${m.lng}`).join('|')}`}
-                            center={[result.startCoords!.lat, result.startCoords!.lng]}
-                            zoom={13}
-                            style={{ height: '100%', width: '100%' }}
-                            scrollWheelZoom={false}
-                          >
-                            <CoordinateGrid useSatellite={useSatellite} />
-                            <ChangeView center={[result.startCoords!.lat, result.startCoords!.lng]} zoom={13} mapRef={mapRef2} />
-                            {useSatellite ? (
-                              <TileLayer
-                                attribution='Tiles &copy; Esri &mdash; Esri, USDA, USGS, AEX, GeoEye, IGN'
-                                url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
-                                crossOrigin={true}
-                              />
-                            ) : (
-                              <TileLayer
-                                attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-                                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                                crossOrigin={true}
-                              />
-                            )}
-                            <Marker position={[result.startCoords!.lat, result.startCoords!.lng]} icon={startIcon}>
-                              <Tooltip permanent direction="top" offset={[0, -10]} className="font-bold text-[10px] uppercase bg-slate-900 text-white border-none rounded p-1 px-2 shadow-lg">INICIO</Tooltip>
-                              <Popup>Punto de Inicio</Popup>
-                            </Marker>
-                            <Marker position={[result.endCoords!.lat, result.endCoords!.lng]} icon={endIcon}>
-                              <Tooltip permanent direction="top" offset={[0, -10]} className="font-bold text-[10px] uppercase bg-blue-600 text-white border-none rounded p-1 px-2 shadow-lg">FINAL</Tooltip>
-                              <Popup>Punto de Finalización</Popup>
-                            </Marker>
-                            
-                            {/* Additional Markers Group A */}
-                            {image2Markers.map((m) => {
-                              const lat = parseFloat(m.lat);
-                              const lng = parseFloat(m.lng);
-                              if (isNaN(lat) || isNaN(lng)) return null;
-                              return (
-                                <Marker key={m.id} position={[lat, lng]} icon={greenIcon}>
-                                  <Tooltip permanent direction="top" offset={[0, -10]} className="font-bold text-[10px] uppercase bg-emerald-600 text-white border-none rounded p-1 px-2 shadow-lg">{m.label}</Tooltip>
-                                  <Popup>{m.label || `Marca Adicional (${lat}, ${lng})`}</Popup>
-                                </Marker>
-                              );
-                            })}
-
-                            <LeafletRouting
-                              start={[result.startCoords!.lat, result.startCoords!.lng]}
-                              end={[result.endCoords!.lat, result.endCoords!.lng]}
-                            />
-                          </MapContainer>
-                        </div>
-
-                        {/* Coordinates list for Group A */}
-                        <div className="mt-4 bg-slate-50 p-4 rounded-xl border border-slate-100">
-                          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3">Coordenadas del Grupo A</p>
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                            {image2Markers.filter(m => !isNaN(parseFloat(m.lat)) && !isNaN(parseFloat(m.lng))).map((m, idx) => (
-                              <div key={m.id} className="flex items-center justify-between p-2 bg-white rounded-lg border border-slate-150 shadow-sm text-xs">
-                                <span className="font-bold text-slate-700">{m.label || `Marca A${idx + 1}`}</span>
-                                <span className="font-mono text-[10px] text-slate-500">
-                                  {parseFloat(m.lat).toFixed(8)}, {parseFloat(m.lng).toFixed(8)}
-                                </span>
-                              </div>
-                            ))}
-                            {image2Markers.filter(m => !isNaN(parseFloat(m.lat)) && !isNaN(parseFloat(m.lng))).length === 0 && (
-                              <p className="text-[10px] text-slate-400 italic col-span-2 text-center py-2">No hay marcas adicionales configuradas en el Anexo B.</p>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* MAP 3: ANEXO C */}
-                      <div className="flex flex-col min-h-[400px] pt-8 border-t border-slate-200/60">
-                        <div className="flex items-center justify-between mb-4">
-                          <h3 className="text-xs font-bold text-slate-900 uppercase tracking-[0.2em]">ANEXO C: TRAZADO VIAL CON MARCAS ADICIONALES (GRUPO B)</h3>
-                        </div>
-
-                        <div className="flex-1 rounded-2xl overflow-hidden border border-slate-200 relative shadow-inner aspect-[4/3] w-full min-h-[400px]">
-                          <MapContainer
-                            ref={mapRef3}
-                            key={`map3-${result.startCoords!.lat}-${result.startCoords!.lng}-${result.endCoords!.lat}-${result.endCoords!.lng}-${image3Markers.map(m => `${m.lat},${m.lng}`).join('|')}`}
-                            center={[result.startCoords!.lat, result.startCoords!.lng]}
-                            zoom={13}
-                            style={{ height: '100%', width: '100%' }}
-                            scrollWheelZoom={false}
-                          >
-                            <CoordinateGrid useSatellite={useSatellite} />
-                            <ChangeView center={[result.startCoords!.lat, result.startCoords!.lng]} zoom={13} mapRef={mapRef3} />
-                            {useSatellite ? (
-                              <TileLayer
-                                attribution='Tiles &copy; Esri &mdash; Esri, USDA, USGS, AEX, GeoEye, IGN'
-                                url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
-                                crossOrigin={true}
-                              />
-                            ) : (
-                              <TileLayer
-                                attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-                                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                                crossOrigin={true}
-                              />
-                            )}
-                            <Marker position={[result.startCoords!.lat, result.startCoords!.lng]} icon={startIcon}>
-                              <Tooltip permanent direction="top" offset={[0, -10]} className="font-bold text-[10px] uppercase bg-slate-900 text-white border-none rounded p-1 px-2 shadow-lg">INICIO</Tooltip>
-                              <Popup>Punto de Inicio</Popup>
-                            </Marker>
-                            <Marker position={[result.endCoords!.lat, result.endCoords!.lng]} icon={endIcon}>
-                              <Tooltip permanent direction="top" offset={[0, -10]} className="font-bold text-[10px] uppercase bg-blue-600 text-white border-none rounded p-1 px-2 shadow-lg">FINAL</Tooltip>
-                              <Popup>Punto de Finalización</Popup>
-                            </Marker>
-                            
-                            {/* Additional Markers Group B */}
-                            {image3Markers.map((m) => {
-                              const lat = parseFloat(m.lat);
-                              const lng = parseFloat(m.lng);
-                              if (isNaN(lat) || isNaN(lng)) return null;
-                              return (
-                                <Marker key={m.id} position={[lat, lng]} icon={greenIcon}>
-                                  <Tooltip permanent direction="top" offset={[0, -10]} className="font-bold text-[10px] uppercase bg-emerald-600 text-white border-none rounded p-1 px-2 shadow-lg">{m.label}</Tooltip>
-                                  <Popup>{m.label || `Marca Adicional (${lat}, ${lng})`}</Popup>
-                                </Marker>
-                              );
-                            })}
-
-                            <LeafletRouting
-                              start={[result.startCoords!.lat, result.startCoords!.lng]}
-                              end={[result.endCoords!.lat, result.endCoords!.lng]}
-                            />
-                          </MapContainer>
-                        </div>
-
-                        {/* Coordinates list for Group B */}
-                        <div className="mt-4 bg-slate-50 p-4 rounded-xl border border-slate-100">
-                          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3">Coordenadas del Grupo B</p>
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                            {image3Markers.filter(m => !isNaN(parseFloat(m.lat)) && !isNaN(parseFloat(m.lng))).map((m, idx) => (
-                              <div key={m.id} className="flex items-center justify-between p-2 bg-white rounded-lg border border-slate-150 shadow-sm text-xs">
-                                <span className="font-bold text-slate-700">{m.label || `Marca B${idx + 1}`}</span>
-                                <span className="font-mono text-[10px] text-slate-500">
-                                  {parseFloat(m.lat).toFixed(8)}, {parseFloat(m.lng).toFixed(8)}
-                                </span>
-                              </div>
-                            ))}
-                            {image3Markers.filter(m => !isNaN(parseFloat(m.lat)) && !isNaN(parseFloat(m.lng))).length === 0 && (
-                              <p className="text-[10px] text-slate-400 italic col-span-2 text-center py-2">No hay marcas adicionales configuradas en el Anexo C.</p>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-
-                    </div>
-                  ) : (
-                    <div className="mt-8 pt-8 border-t border-slate-100">
                       <div className="bg-amber-50 border border-amber-100 rounded-xl p-4 text-center">
                         <MapPin className="w-6 h-6 text-amber-400 mx-auto mb-2" />
                         <p className="text-[10px] font-bold text-amber-700 uppercase tracking-wider">Mapa no disponible</p>

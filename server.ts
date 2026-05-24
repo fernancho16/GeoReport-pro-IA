@@ -7,7 +7,7 @@ import dotenv from "dotenv";
 dotenv.config();
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
@@ -309,12 +309,81 @@ async function generateWithOpenCode(input: GenerationInput): Promise<ReportData>
   return { ...applyFallbacks(data, input), _provider: `OpenCode (${model})` };
 }
 
+// Helper to dynamically retrieve and rotate GitHub tokens
+function getGitHubToken(): string | undefined {
+  const keys: string[] = [];
+  for (const key in process.env) {
+    if ((key.startsWith("GITHUB_TOKEN") || key.startsWith("GITHUB_PAT")) && process.env[key]) {
+      const val = process.env[key]?.trim();
+      if (val) keys.push(val);
+    }
+  }
+  if (keys.length === 0) return undefined;
+  const randomIndex = Math.floor(Math.random() * keys.length);
+  return keys[randomIndex];
+}
+
+// ─────────────────────────────────────────────
+// PROVIDER 5: GITHUB MODELS (free tier)
+// Configure GITHUB_TOKEN and optionally GITHUB_MODEL
+// ─────────────────────────────────────────────
+async function generateWithGitHub(input: GenerationInput, modelOverride?: string): Promise<ReportData> {
+  const apiKey = getGitHubToken();
+  if (!apiKey) throw new Error("GITHUB_TOKEN not configured");
+  const model = modelOverride || process.env.GITHUB_MODEL || "meta/Llama-3.3-70B-Instruct";
+
+  const ctx = buildContextText(input);
+  const fileNote = input.files?.length
+    ? `\n[Archivos adjuntos: ${input.files.map((f) => f.name || f.mimeType).join(", ")}]`
+    : "";
+
+  const userContent = `${ctx ? `CONTEXTO:\n${ctx}\n` : ""}DESCRIPCIÓN:\n${input.description || "Genera el informe de localización."}${fileNote}`;
+
+  const response = await fetch("https://models.github.ai/inference/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model,
+      messages: [
+        { role: "system", content: SYSTEM_INSTRUCTIONS },
+        { role: "user", content: userContent },
+      ],
+      response_format: { type: "json_object" },
+    }),
+  });
+
+  if (!response.ok) {
+    const err: any = await response.json().catch(() => ({}));
+    const error: any = new Error(err.error?.message || `GitHub Models HTTP ${response.status}`);
+    error.status = response.status;
+    throw error;
+  }
+
+  const resp: any = await response.json();
+  const content = resp.choices?.[0]?.message?.content || "{}";
+  const data = JSON.parse(content);
+  return { ...applyFallbacks(data, input), _provider: `GitHub Models (${model})` };
+}
+
 function getProviders(input: GenerationInput) {
+  const githubEnabled = !!getGitHubToken();
   return [
     { id: "gemini", name: "Gemini", fn: () => generateWithGemini(input), enabled: !!process.env.GEMINI_API_KEY },
     { id: "groq", name: "Groq", fn: () => generateWithGroq(input), enabled: !!process.env.GROQ_API_KEY },
     { id: "openrouter", name: "OpenRouter", fn: () => generateWithOpenRouter(input), enabled: !!process.env.OPENROUTER_API_KEY },
     { id: "opencode", name: "OpenCode", fn: () => generateWithOpenCode(input), enabled: !!process.env.OPENCODE_BASE_URL && !!process.env.OPENCODE_MODEL },
+    
+    // GitHub Models
+    { id: "github-llama", name: "GitHub - Llama 3.3 70B", fn: () => generateWithGitHub(input, "meta/Llama-3.3-70B-Instruct"), enabled: githubEnabled },
+    { id: "github-deepseek", name: "GitHub - DeepSeek R1", fn: () => generateWithGitHub(input, "deepseek/DeepSeek-R1"), enabled: githubEnabled },
+    { id: "github-ministral", name: "GitHub - Ministral 3B", fn: () => generateWithGitHub(input, "mistral-ai/Ministral-3B"), enabled: githubEnabled },
+    { id: "github-gpt41", name: "GitHub - GPT 4.1", fn: () => generateWithGitHub(input, "openai/gpt-4.1"), enabled: githubEnabled },
+    { id: "github-gpt4o", name: "GitHub - GPT 4o", fn: () => generateWithGitHub(input, "openai/gpt-4o"), enabled: githubEnabled },
+    { id: "github-gpt4omini", name: "GitHub - GPT 4o Mini", fn: () => generateWithGitHub(input, "openai/gpt-4o-mini"), enabled: githubEnabled },
+    { id: "github-gpt5", name: "GitHub - GPT 5", fn: () => generateWithGitHub(input, "openai/gpt-5"), enabled: githubEnabled },
   ];
 }
 
@@ -408,6 +477,7 @@ app.post("/api/generate-report", async (req, res) => {
 
 // Status endpoint to see which providers are configured
 app.get("/api/providers", (_req, res) => {
+  const githubEnabled = !!getGitHubToken();
   res.json({
     providers: [
       { id: "auto", name: "Auto (fallback)", configured: true, supportsFiles: true },
@@ -415,6 +485,15 @@ app.get("/api/providers", (_req, res) => {
       { id: "groq", name: "Groq (Llama 3.3 70B)", configured: !!process.env.GROQ_API_KEY, supportsFiles: false },
       { id: "openrouter", name: `OpenRouter (${process.env.OPENROUTER_MODEL || "deepseek/deepseek-v4-flash:free"})`, configured: !!process.env.OPENROUTER_API_KEY, supportsFiles: false },
       { id: "opencode", name: `OpenCode (${process.env.OPENCODE_MODEL || "sin modelo"})`, configured: !!process.env.OPENCODE_BASE_URL && !!process.env.OPENCODE_MODEL, supportsFiles: false },
+      
+      // GitHub Models
+      { id: "github-llama", name: "GitHub - Llama 3.3 70B", configured: githubEnabled, supportsFiles: false },
+      { id: "github-deepseek", name: "GitHub - DeepSeek R1", configured: githubEnabled, supportsFiles: false },
+      { id: "github-ministral", name: "GitHub - Ministral 3B", configured: githubEnabled, supportsFiles: false },
+      { id: "github-gpt41", name: "GitHub - GPT 4.1", configured: githubEnabled, supportsFiles: false },
+      { id: "github-gpt4o", name: "GitHub - GPT 4o", configured: githubEnabled, supportsFiles: false },
+      { id: "github-gpt4omini", name: "GitHub - GPT 4o Mini", configured: githubEnabled, supportsFiles: false },
+      { id: "github-gpt5", name: "GitHub - GPT 5", configured: githubEnabled, supportsFiles: false },
     ],
   });
 });
@@ -444,7 +523,13 @@ async function startServer() {
     if (process.env.GROQ_API_KEY) console.log(`   ✓ Groq - Llama 3.3 70B (fallback rápido)`);
     if (process.env.OPENROUTER_API_KEY) console.log(`   ✓ OpenRouter - ${process.env.OPENROUTER_MODEL || "deepseek/deepseek-v4-flash:free"} (fallback final)`);
     if (process.env.OPENCODE_BASE_URL && process.env.OPENCODE_MODEL) console.log(`   ✓ OpenCode - ${process.env.OPENCODE_MODEL}`);
-    if (!process.env.GEMINI_API_KEY && !process.env.GROQ_API_KEY && !process.env.OPENROUTER_API_KEY && !(process.env.OPENCODE_BASE_URL && process.env.OPENCODE_MODEL)) {
+    
+    const githubEnabled = !!getGitHubToken();
+    if (githubEnabled) {
+      console.log(`   ✓ GitHub Models (Rotación activa con endpoint https://models.github.ai/inference)`);
+    }
+    
+    if (!process.env.GEMINI_API_KEY && !process.env.GROQ_API_KEY && !process.env.OPENROUTER_API_KEY && !(process.env.OPENCODE_BASE_URL && process.env.OPENCODE_MODEL) && !githubEnabled) {
       console.warn(`   ⚠️  Sin API keys configuradas en .env`);
     }
     console.log("");
