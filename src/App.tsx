@@ -201,7 +201,7 @@ function getGridData(bounds: L.LatLngBounds, zoom: number) {
   return { lines, latLabels, lngLabels };
 }
 
-function CoordinateGrid({ useSatellite }: { useSatellite: boolean }) {
+function CoordinateGrid({ useSatellite }: { useSatellite?: boolean }) {
   const map = useMap();
   const [bounds, setBounds] = useState(() => map.getBounds());
 
@@ -355,7 +355,56 @@ export default function App() {
 
   // DMS states
   const [useDMS, setUseDMS] = useState(false);
-  const [useSatellite, setUseSatellite] = useState(false);
+  // Base layer selector: 'osm' | 'esri-imagery' | 'esri-clarity' | 'esri-topo' | 'carto-light' | 'carto-dark' | 'google-sat'
+  const [baseLayer, setBaseLayer] = useState<string>('osm');
+  const useSatellite = baseLayer !== 'osm' && baseLayer !== 'esri-topo' && baseLayer !== 'carto-light';
+
+  const BASE_LAYERS: { id: string; label: string; url: string; attribution: string; maxZoom?: number }[] = [
+    {
+      id: 'osm',
+      label: 'OpenStreetMap',
+      url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+    },
+    {
+      id: 'esri-imagery',
+      label: 'Satélite Esri',
+      url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+      attribution: 'Tiles &copy; Esri &mdash; Esri, USDA, USGS, AEX, GeoEye, IGN',
+    },
+    {
+      id: 'esri-clarity',
+      label: 'Esri Clarity (sin nubes)',
+      url: 'https://clarity.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+      attribution: 'Tiles &copy; Esri &mdash; Esri, Maxar, Earthstar Geographics',
+      maxZoom: 19,
+    },
+    {
+      id: 'google-sat',
+      label: 'Google Satélite',
+      url: 'https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}',
+      attribution: '&copy; Google Maps',
+      maxZoom: 20,
+    },
+    {
+      id: 'esri-topo',
+      label: 'Esri Topo',
+      url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}',
+      attribution: 'Tiles &copy; Esri &mdash; Esri, DeLorme, NAVTEQ, TomTom, Intermap, iPC',
+    },
+    {
+      id: 'carto-light',
+      label: 'CartoDB Claro',
+      url: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/">CARTO</a>',
+    },
+    {
+      id: 'carto-dark',
+      label: 'CartoDB Oscuro',
+      url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/">CARTO</a>',
+    },
+  ];
   const [forceFreeMap, setForceFreeMap] = useState(() => localStorage.getItem('forceFreeMap') === 'true');
   const [dmsStartFull, setDmsStartFull] = useState('');
   const [dmsEndFull, setDmsEndFull] = useState('');
@@ -1612,18 +1661,22 @@ export default function App() {
                       
                       {/* MAP 1: ANEXO A */}
                       <div className="flex flex-col min-h-[400px]">
-                        <div className="flex items-center justify-between mb-4">
+                        <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
                           <h3 className="text-xs font-bold text-slate-900 uppercase tracking-[0.2em]">ANEXO A: GEORREFERENCIACIÓN Y TRAZADO VIAL PRINCIPAL</h3>
-                          <div className="flex items-center gap-2">
-                            <button
-                              onClick={() => setUseSatellite(!useSatellite)}
-                              className={`text-[10px] px-2 py-1 rounded font-bold uppercase flex items-center gap-1 transition-colors ${
-                                useSatellite ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                              }`}
-                            >
-                              <MapIcon className="w-3 h-3" />
-                              {useSatellite ? 'Vista Plano' : 'Vista Satélite'}
-                            </button>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <div className="flex items-center gap-1.5 bg-slate-100 rounded-lg p-1">
+                              <MapIcon className="w-3 h-3 text-slate-500 ml-1" />
+                              <select
+                                value={baseLayer}
+                                onChange={(e) => setBaseLayer(e.target.value)}
+                                className="text-[10px] bg-transparent text-slate-700 font-bold uppercase cursor-pointer outline-none pr-1 py-0.5"
+                                title="Cambiar capa base del mapa"
+                              >
+                                {BASE_LAYERS.map(l => (
+                                  <option key={l.id} value={l.id}>{l.label}</option>
+                                ))}
+                              </select>
+                            </div>
                             {result._provider && (
                               <span className="text-[9px] bg-green-50 text-green-600 px-2 py-1 rounded font-bold uppercase border border-green-100">
                                 IA: {result._provider}
@@ -1643,19 +1696,10 @@ export default function App() {
                           >
                             <CoordinateGrid useSatellite={useSatellite} />
                             <ChangeView center={[result.startCoords!.lat, result.startCoords!.lng]} zoom={13} mapRef={mapRef1} />
-                            {useSatellite ? (
-                              <TileLayer
-                                attribution='Tiles &copy; Esri &mdash; Esri, USDA, USGS, AEX, GeoEye, IGN'
-                                url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
-                                crossOrigin={true}
-                              />
-                            ) : (
-                              <TileLayer
-                                attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-                                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                                crossOrigin={true}
-                              />
-                            )}
+                            {(() => {
+                              const layer = BASE_LAYERS.find(l => l.id === baseLayer) || BASE_LAYERS[0];
+                              return <TileLayer key={layer.id} attribution={layer.attribution} url={layer.url} maxZoom={layer.maxZoom || 19} crossOrigin={true} />;
+                            })()}
                             <Marker position={[result.startCoords!.lat, result.startCoords!.lng]} icon={startIcon}>
                               <Tooltip permanent direction="top" offset={[0, -10]} className="font-bold text-[10px] uppercase bg-slate-900 text-white border-none rounded p-1 px-2 shadow-lg">INICIO</Tooltip>
                               <Popup>Punto de Inicio</Popup>
@@ -1706,19 +1750,10 @@ export default function App() {
                           >
                             <CoordinateGrid useSatellite={useSatellite} />
                             <ChangeView center={[result.startCoords!.lat, result.startCoords!.lng]} zoom={13} mapRef={mapRef2} />
-                            {useSatellite ? (
-                              <TileLayer
-                                attribution='Tiles &copy; Esri &mdash; Esri, USDA, USGS, AEX, GeoEye, IGN'
-                                url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
-                                crossOrigin={true}
-                              />
-                            ) : (
-                              <TileLayer
-                                attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-                                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                                crossOrigin={true}
-                              />
-                            )}
+                            {(() => {
+                              const layer = BASE_LAYERS.find(l => l.id === baseLayer) || BASE_LAYERS[0];
+                              return <TileLayer key={layer.id} attribution={layer.attribution} url={layer.url} maxZoom={layer.maxZoom || 19} crossOrigin={true} />;
+                            })()}
                             <Marker position={[result.startCoords!.lat, result.startCoords!.lng]} icon={startIcon}>
                               <Tooltip permanent direction="top" offset={[0, -10]} className="font-bold text-[10px] uppercase bg-slate-900 text-white border-none rounded p-1 px-2 shadow-lg">INICIO</Tooltip>
                               <Popup>Punto de Inicio</Popup>
@@ -1784,19 +1819,10 @@ export default function App() {
                           >
                             <CoordinateGrid useSatellite={useSatellite} />
                             <ChangeView center={[result.startCoords!.lat, result.startCoords!.lng]} zoom={13} mapRef={mapRef3} />
-                            {useSatellite ? (
-                              <TileLayer
-                                attribution='Tiles &copy; Esri &mdash; Esri, USDA, USGS, AEX, GeoEye, IGN'
-                                url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
-                                crossOrigin={true}
-                              />
-                            ) : (
-                              <TileLayer
-                                attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-                                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                                crossOrigin={true}
-                              />
-                            )}
+                            {(() => {
+                              const layer = BASE_LAYERS.find(l => l.id === baseLayer) || BASE_LAYERS[0];
+                              return <TileLayer key={layer.id} attribution={layer.attribution} url={layer.url} maxZoom={layer.maxZoom || 19} crossOrigin={true} />;
+                            })()}
                             <Marker position={[result.startCoords!.lat, result.startCoords!.lng]} icon={startIcon}>
                               <Tooltip permanent direction="top" offset={[0, -10]} className="font-bold text-[10px] uppercase bg-slate-900 text-white border-none rounded p-1 px-2 shadow-lg">INICIO</Tooltip>
                               <Popup>Punto de Inicio</Popup>
